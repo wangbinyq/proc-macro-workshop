@@ -21,6 +21,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder_fields: Vec<_> = fields.iter().map(wrap_option).collect();
     let builder_init_fields: Vec<_> = fields.iter().map(init_builder_fields).collect();
     let builder_setter: Vec<_> = fields.iter().map(builder_setter).collect();
+    let build_fields: Vec<_> = fields.iter().map(build_fields).collect();
 
     let expanded = quote! {
         pub struct #builder_name {
@@ -29,6 +30,12 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         impl #builder_name {
             #(#builder_setter)*
+
+            pub fn build(&mut self) -> Result<Command, Box<dyn std::error::Error>> {
+                Ok(#name {
+                    #(#build_fields),*
+                })
+            }
         }
 
         impl #name {
@@ -88,5 +95,16 @@ fn builder_setter(field: &Field) -> TokenStream {
             self.#name = Some(#name);
             self
         }
+    }
+}
+
+fn build_fields(field: &Field) -> TokenStream {
+    let name = field
+        .ident
+        .as_ref()
+        .expect(&format!("field must named: {:?}", field.span()));
+    let error = format!("field {} is not set", name);
+    quote! {
+        #name: self.#name.clone().ok_or(#error)?
     }
 }
