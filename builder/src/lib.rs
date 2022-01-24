@@ -18,12 +18,17 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .map(|f| f)
         .collect();
 
-    let builder_fields = fields.iter().map(wrap_option).collect::<Vec<_>>();
-    let builder_init_fields = fields.iter().map(init_builder_fields).collect::<Vec<_>>();
+    let builder_fields: Vec<_> = fields.iter().map(wrap_option).collect();
+    let builder_init_fields: Vec<_> = fields.iter().map(init_builder_fields).collect();
+    let builder_setter: Vec<_> = fields.iter().map(builder_setter).collect();
 
     let expanded = quote! {
         pub struct #builder_name {
             #(#builder_fields),*
+        }
+
+        impl #builder_name {
+            #(#builder_setter)*
         }
 
         impl #name {
@@ -69,5 +74,19 @@ fn init_builder_fields(field: &Field) -> TokenStream {
         .expect(&format!("field must named: {:?}", field.span()));
     quote! {
         #name: None
+    }
+}
+
+fn builder_setter(field: &Field) -> TokenStream {
+    let name = field
+        .ident
+        .as_ref()
+        .expect(&format!("field must named: {:?}", field.span()));
+    let ty = &field.ty;
+    quote! {
+        pub fn #name(&mut self, #name: #ty) -> &mut Self {
+            self.#name = Some(#name);
+            self
+        }
     }
 }
