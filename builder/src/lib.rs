@@ -1,11 +1,11 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, Field, Fields,
-    FieldsNamed, GenericArgument, PathArguments, Type,
+    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, Error, Field, Fields,
+    FieldsNamed, GenericArgument, Lit, Meta, NestedMeta, PathArguments, Type,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -73,6 +73,7 @@ fn wrap_option(field: &Field) -> Field {
         );
         field.ty = ty;
     };
+    field.attrs = Default::default();
 
     field
 }
@@ -95,10 +96,39 @@ fn builder_setter(field: &Field) -> TokenStream {
         .expect(&format!("field must named: {:?}", field.span()));
     let ty = inner_optional_field(field).unwrap_or(field.ty.clone());
 
-    quote! {
-        pub fn #name(&mut self, #name: #ty) -> &mut Self {
-            self.#name = Some(#name);
-            self
+    match get_each_attr(field) {
+        Err(err) => Error::into_compile_error(err),
+        Ok(each_field) => {
+            let mut setter = quote! {
+                pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                    self.#name = Some(#name);
+                    self
+                }
+            };
+
+            if let Some(each_field) = each_field {
+                let inner_ty = inner_vec_field(field).unwrap();
+                let each_setter = quote! {
+                    pub fn #each_field(&mut self, #name: #inner_ty) -> &mut Self {
+                        if let Some(field) = &mut self.#name {
+                            field.push(#name);
+                        } else {
+                            self.#name = Some(vec![#name]);
+                        }
+                        self
+                    }
+                };
+                if &each_field == name {
+                    setter = each_setter;
+                } else {
+                    setter = quote! {
+                        #setter
+
+                        #each_setter
+                    };
+                }
+            }
+            setter
         }
     }
 }
@@ -111,6 +141,10 @@ fn build_fields(field: &Field) -> TokenStream {
     let error = format!("field {} is not set", name);
     if is_optional_field(field) {
         quote! {#name: self.#name.clone() }
+    } else if is_vec_field(field) {
+        quote! {
+            #name: self.#name.clone().unwrap_or_default()
+        }
     } else {
         quote! {
             #name: self.#name.clone().ok_or(#error)?
@@ -121,6 +155,14 @@ fn build_fields(field: &Field) -> TokenStream {
 fn is_optional_field(field: &Field) -> bool {
     if let Type::Path(ty) = &field.ty {
         ty.path.segments[0].ident == "Option"
+    } else {
+        false
+    }
+}
+
+fn is_vec_field(field: &Field) -> bool {
+    if let Type::Path(ty) = &field.ty {
+        ty.path.segments[0].ident == "Vec"
     } else {
         false
     }
@@ -137,4 +179,46 @@ fn inner_optional_field(field: &Field) -> Option<Type> {
         }
     }
     None
+}
+
+fn inner_vec_field(field: &Field) -> Option<Type> {
+    if let Type::Path(ty) = &field.ty {
+        if ty.path.segments[0].ident == "Vec" {
+            if let PathArguments::AngleBracketed(args) = &ty.path.segments[0].arguments {
+                if let Some(GenericArgument::Type(ty)) = args.args.first() {
+                    return Some(ty.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_each_attr(field: &Field) -> Result<Option<Ident>, Error> {
+    let metas: Vec<_> = field
+        .attrs
+        .iter()
+        .map(|attr| attr.parse_meta())
+        .collect::<Result<_, _>>()?;
+
+    if metas.len() > 0 {
+        if let Meta::List(ml) = &metas[0] {
+            if let Some(NestedMeta::Meta(meta)) = &ml.nested.iter().next() {
+                if let Meta::NameValue(nv) = meta {
+                    if let Lit::Str(str) = &nv.lit {
+                        if nv.path.segments[0].ident.to_string() == "each" {
+                            let str: Ident = str.parse()?;
+                            return Ok(Some(str));
+                        }
+                    }
+                }
+            }
+        }
+        Err(Error::new(
+            field.span(),
+            r#"expected `builder(each = "...")`"#,
+        ))
+    } else {
+        Ok(None)
+    }
 }
