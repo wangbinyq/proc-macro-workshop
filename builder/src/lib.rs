@@ -1,7 +1,8 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, Field, Fields, FieldsNamed,
+    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, Field, Fields,
+    FieldsNamed, GenericArgument, PathArguments, Type,
 };
 
 #[proc_macro_derive(Builder)]
@@ -66,11 +67,13 @@ fn wrap_option(field: &Field) -> Field {
     let ty = &field.ty;
     let mut field = field.clone();
 
-    let ty = parse_quote!(
-        Option<#ty>
-    );
+    if !is_optional_field(&field) {
+        let ty = parse_quote!(
+            Option<#ty>
+        );
+        field.ty = ty;
+    };
 
-    field.ty = ty;
     field
 }
 
@@ -79,6 +82,7 @@ fn init_builder_fields(field: &Field) -> TokenStream {
         .ident
         .as_ref()
         .expect(&format!("field must named: {:?}", field.span()));
+
     quote! {
         #name: None
     }
@@ -89,7 +93,8 @@ fn builder_setter(field: &Field) -> TokenStream {
         .ident
         .as_ref()
         .expect(&format!("field must named: {:?}", field.span()));
-    let ty = &field.ty;
+    let ty = inner_optional_field(field).unwrap_or(field.ty.clone());
+
     quote! {
         pub fn #name(&mut self, #name: #ty) -> &mut Self {
             self.#name = Some(#name);
@@ -104,7 +109,32 @@ fn build_fields(field: &Field) -> TokenStream {
         .as_ref()
         .expect(&format!("field must named: {:?}", field.span()));
     let error = format!("field {} is not set", name);
-    quote! {
-        #name: self.#name.clone().ok_or(#error)?
+    if is_optional_field(field) {
+        quote! {#name: self.#name.clone() }
+    } else {
+        quote! {
+            #name: self.#name.clone().ok_or(#error)?
+        }
     }
+}
+
+fn is_optional_field(field: &Field) -> bool {
+    if let Type::Path(ty) = &field.ty {
+        ty.path.segments[0].ident == "Option"
+    } else {
+        false
+    }
+}
+
+fn inner_optional_field(field: &Field) -> Option<Type> {
+    if let Type::Path(ty) = &field.ty {
+        if ty.path.segments[0].ident == "Option" {
+            if let PathArguments::AngleBracketed(args) = &ty.path.segments[0].arguments {
+                if let Some(GenericArgument::Type(ty)) = args.args.first() {
+                    return Some(ty.clone());
+                }
+            }
+        }
+    }
+    None
 }
