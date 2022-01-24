@@ -32,7 +32,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         impl #builder_name {
             #(#builder_setter)*
 
-            pub fn build(&mut self) -> Result<Command, Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> ::core::result::Result<Command, ::std::boxed::Box<dyn ::std::error::Error>> {
                 Ok(#name {
                     #(#build_fields),*
                 })
@@ -69,11 +69,11 @@ fn wrap_option(field: &Field) -> Field {
 
     if !is_optional_field(&field) {
         let ty = parse_quote!(
-            Option<#ty>
+            ::core::option::Option<#ty>
         );
         field.ty = ty;
     };
-    field.attrs = Default::default();
+    field.attrs = ::std::vec![];
 
     field
 }
@@ -85,7 +85,7 @@ fn init_builder_fields(field: &Field) -> TokenStream {
         .expect(&format!("field must named: {:?}", field.span()));
 
     quote! {
-        #name: None
+        #name: ::core::option::Option::None
     }
 }
 
@@ -101,7 +101,7 @@ fn builder_setter(field: &Field) -> TokenStream {
         Ok(each_field) => {
             let mut setter = quote! {
                 pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = Some(#name);
+                    self.#name = ::core::option::Option::Some(#name);
                     self
                 }
             };
@@ -110,10 +110,10 @@ fn builder_setter(field: &Field) -> TokenStream {
                 let inner_ty = inner_vec_field(field).unwrap();
                 let each_setter = quote! {
                     pub fn #each_field(&mut self, #name: #inner_ty) -> &mut Self {
-                        if let Some(field) = &mut self.#name {
+                        if let ::core::option::Option::Some(field) = &mut self.#name {
                             field.push(#name);
                         } else {
-                            self.#name = Some(vec![#name]);
+                            self.#name = ::core::option::Option::Some(vec![#name]);
                         }
                         self
                     }
