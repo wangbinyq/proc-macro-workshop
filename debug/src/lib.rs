@@ -10,8 +10,6 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
     let name_str = format!("{}", name);
-    let generics = add_trait_bounds(input.generics);
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let fields: Vec<Field> = fields(input.data)
         .expect("struct must with named fields")
@@ -19,6 +17,9 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .into_iter()
         .map(|f| f)
         .collect();
+    let generics = add_trait_bounds(input.generics, fields.as_ref());
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
     let debug_fields: Vec<_> = fields.iter().map(debug_field).collect();
 
     let expand = quote! {
@@ -81,10 +82,30 @@ fn debug_field(field: &Field) -> TokenStream {
     }
 }
 
-fn add_trait_bounds(mut generics: Generics) -> Generics {
+fn add_trait_bounds(mut generics: Generics, fields: &Vec<Field>) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(::core::fmt::Debug));
+            let mut only_phantom_param = false;
+            for field in fields {
+                let ty = &field.ty;
+                let ts = quote! {
+                    #ty
+                };
+
+                let tp = type_param.ident.to_string();
+                let ts = ts.to_string();
+
+                if ts == format!("PhantomData < {} >", tp) {
+                    only_phantom_param = true;
+                } else if ts == tp || ts.contains(&format!("< {} >", tp)) {
+                    only_phantom_param = false;
+                    break;
+                }
+            }
+
+            if !only_phantom_param {
+                type_param.bounds.push(parse_quote!(::core::fmt::Debug));
+            }
         }
     }
     generics
