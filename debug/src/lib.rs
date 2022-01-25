@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, FieldsNamed};
+use syn::{parse_macro_input, Data, DeriveInput, Error, Field, Fields, FieldsNamed, Lit, Meta};
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -44,7 +44,33 @@ fn fields(data: &Data) -> Option<FieldsNamed> {
 fn debug_field(field: &Field) -> TokenStream {
     let ident = field.ident.as_ref().unwrap();
     let name = ident.to_string();
+    let metas = field
+        .attrs
+        .iter()
+        .map(|attr| attr.parse_meta())
+        .collect::<Result<Vec<_>, Error>>()
+        .unwrap();
+
+    let format = metas.first().and_then(|meta| {
+        if let Meta::NameValue(nv) = meta {
+            if let Lit::Str(str) = &nv.lit {
+                return Some(str);
+            }
+        }
+        None
+    });
+
+    let value = if let Some(format) = format {
+        quote! {
+            &::core::format_args!(#format, &self.#ident)
+        }
+    } else {
+        quote! {
+            self.#ident
+        }
+    };
+
     quote! {
-        .field(#name, &self.#ident)
+        .field(#name, &#value)
     }
 }
