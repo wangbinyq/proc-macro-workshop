@@ -1,5 +1,7 @@
+use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
+    braced,
     parse::{Parse, ParseStream, Result as ParseResult},
     Ident, LitInt, Token,
 };
@@ -8,6 +10,7 @@ struct Seq {
     ident: Ident,
     start: LitInt,
     end: LitInt,
+    content: TokenStream,
 }
 
 impl Parse for Seq {
@@ -17,7 +20,15 @@ impl Parse for Seq {
         let start = input.parse()?;
         input.parse::<Token![..]>()?;
         let end = input.parse()?;
-        Ok(Self { ident, start, end })
+        let content;
+        braced!(content in input);
+        let content = content.parse()?;
+        Ok(Self {
+            ident,
+            start,
+            end,
+            content,
+        })
     }
 }
 
