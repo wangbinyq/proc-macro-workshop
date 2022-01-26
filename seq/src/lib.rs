@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{
     braced,
     parse::{Parse, ParseStream, Result as ParseResult},
-    parse_macro_input, Ident, LitInt, Token,
+    parse_macro_input, parse_quote, Ident, LitInt, Token,
 };
 
 struct Seq {
@@ -39,12 +39,7 @@ pub fn seq(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         ..seq.end.base10_parse().unwrap())
         .map(|n| {
             let ident = &seq.ident;
-            let token: TokenStream = seq
-                .content
-                .clone()
-                .into_iter()
-                .map(|tt| replace_token_tree_ident(tt, ident, n))
-                .collect();
+            let token: TokenStream = transform_token_stream(seq.content.clone(), ident, n);
             token
         })
         .collect();
@@ -56,25 +51,58 @@ pub fn seq(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::from(expand)
 }
 
-fn replace_token_tree_ident(tt: TokenTree, ident: &Ident, n: isize) -> TokenTree {
-    match &tt {
-        TokenTree::Ident(id) => {
-            if ident == id {
-                return TokenTree::Literal(Literal::isize_unsuffixed(n));
+fn transform_token_stream(ts: TokenStream, ident: &Ident, n: isize) -> TokenStream {
+    let mut tokens = ts.into_iter().peekable();
+
+    let mut transformed: Vec<TokenTree> = vec![];
+
+    while let Some(tt) = tokens.next() {
+        let mut replace_tile = false;
+        let mut tt = match &tt {
+            TokenTree::Punct(p) => {
+                let mut tt = tt.clone();
+                if p.as_char() == '~' {
+                    if let Some(TokenTree::Ident(id)) = tokens.peek() {
+                        if id == ident {
+                            replace_tile = true;
+                            let span = p.span();
+                            tokens.next();
+                            tt = TokenTree::Literal(Literal::isize_unsuffixed(n));
+                            tt.set_span(span);
+                        }
+                    }
+                }
+                tt
             }
-            tt
+            TokenTree::Ident(id) => {
+                if id == ident {
+                    TokenTree::Literal(Literal::isize_unsuffixed(n))
+                } else {
+                    tt
+                }
+            }
+            TokenTree::Group(group) => {
+                let stream = group.stream();
+                let stream = transform_token_stream(stream, ident, n);
+                let span = group.span();
+                let mut group = Group::new(group.delimiter(), stream);
+                group.set_span(span);
+                group.into()
+            }
+            _ => tt,
+        };
+        if replace_tile {
+            if let Some(c) = transformed.pop() {
+                let ident = Ident::new(&format!("{}{}", c, tt), c.span());
+                tt = parse_quote! {
+                    #ident
+                };
+            }
         }
-        TokenTree::Group(group) => {
-            let stream = group
-                .stream()
-                .into_iter()
-                .map(|tt2| replace_token_tree_ident(tt2, ident, n))
-                .collect();
-            let span = group.span();
-            let mut group = Group::new(group.delimiter(), stream);
-            group.set_span(span);
-            group.into()
-        }
-        _ => tt,
+        transformed.push(tt);
+    }
+
+    quote! {
+        #(#transformed)*
     }
 }
